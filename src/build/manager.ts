@@ -6,6 +6,7 @@ import {
   generateBuildServerConfig,
   getIsXcodeBuildServerInstalled,
   getSchemes,
+  isRunnableScheme,
 } from "../common/cli/scripts";
 import type { ExtensionContext } from "../common/commands";
 import { getWorkspaceConfig } from "../common/config";
@@ -30,7 +31,9 @@ export class BuildManager {
       void this.generateXcodeBuildServerSettingsOnSchemeChange({
         scheme: scheme,
       });
-      void this.rebuildIndexesOnSchemeChange();
+      void this.rebuildIndexesOnSchemeChange({
+        scheme: scheme,
+      });
     });
   }
 
@@ -145,7 +148,29 @@ export class BuildManager {
     }
   }
 
-  async rebuildIndexesOnSchemeChange() {
+  async rebuildIndexesOnSchemeChange(options: {
+    scheme: string | undefined;
+  }) {
+  if (!options.scheme) {
+    return;
+  }
+
+  const xcworkspace = await askXcodeWorkspacePath(this.context);
+  const isRunnable = await isRunnableScheme({
+    scheme: options.scheme,
+    configuration: "Debug", // or get the actual configuration
+    sdk: undefined,
+    xcworkspace: xcworkspace
+  });
+
+  // If we get build settings, it's a buildable scheme
+  if (isRunnable) {
     vscode.commands.executeCommand("sweetpad.build.reindex");
+  } else {
+    // If we don't get build settings, it's likely a test scheme
+    vscode.commands.executeCommand("sweetpad.testing.buildForTesting");
+  }
+
+    // vscode.commands.executeCommand("sweetpad.build.reindex");
   }
 }
