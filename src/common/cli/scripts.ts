@@ -146,6 +146,16 @@ export class XcodeBuildSettings {
   }
 }
 
+export async function isRunnableScheme(options: {
+  scheme: string;
+  configuration: string;
+  sdk: string | undefined;
+  xcworkspace: string;
+}): Promise<boolean> {
+  const settings = await getBuildSettingsList(options);
+  return settings.length > 0;
+}
+
 /**
  * Extract build settings for the given scheme and configuration
  *
@@ -176,38 +186,42 @@ async function getBuildSettingsList(options: {
     args.push("-sdk", options.sdk);
   }
 
-  const stdout = await exec({
-    command: "xcodebuild",
-    args: args,
-  });
+  try {
+    const stdout = await exec({ 
+      command: "xcodebuild",
+      args: args,
+    });
 
-  // First few lines can be invalid json, so we need to skip them, untill we find "{" or "[" at the beginning of the line
-  const lines = stdout.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (!line) {
-      commonLogger.warn("Empty line in build settings output", {
-        stdout: stdout,
-        index: i,
-      });
-      continue;
-    }
-
-    if (line.startsWith("{") || line.startsWith("[")) {
-      const data = lines.slice(i).join("\n");
-      const output = JSON.parse(data) as BuildSettingsOutput;
-      if (output.length === 0) {
-        return [];
-      }
-      return output.map((output) => {
-        return new XcodeBuildSettings({
-          settings: output.buildSettings,
-          target: output.target,
+    // First few lines can be invalid json, so we need to skip them, untill we find "{" or "[" at the beginning of the line
+    const lines = stdout.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line) {
+        commonLogger.warn("Empty line in build settings output", {
+          stdout: stdout,
+          index: i,
         });
-      });
+        continue;
+      }
+
+      if (line.startsWith("{") || line.startsWith("[")) {
+        const data = lines.slice(i).join("\n");
+        const output = JSON.parse(data) as BuildSettingsOutput;
+        if (output.length === 0) {
+          return [];
+        }
+        return output.map((output) => {
+          return new XcodeBuildSettings({
+            settings: output.buildSettings,
+            target: output.target,
+          });
+        });
+      }
     }
+    return [];
+  } catch (error) {
+    return [];
   }
-  return [];
 }
 
 /**
