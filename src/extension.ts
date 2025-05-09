@@ -9,6 +9,7 @@ import {
   generateBuildServerConfigCommand,
   launchCommand,
   openXcodeCommand,
+  reindexCommand,
   removeBundleDirCommand,
   resolveDependenciesCommand,
   runCommand,
@@ -138,7 +139,7 @@ export function activate(context: vscode.ExtensionContext) {
   d(command("sweetpad.build.launch", "Build & Run", launchCommand));
   d(command("sweetpad.build.run", "Run", runCommand));
   d(command("sweetpad.build.build", "Build", buildCommand));
-  d(command("sweetpad.build.reindex", "Indexing", buildCommand));
+  d(command("sweetpad.build.reindex", "Indexing", reindexCommand));
   d(command("sweetpad.build.clean", "Clean", cleanCommand));
   d(command("sweetpad.build.test", "Test", testCommand));
   d(command("sweetpad.build.resolveDependencies", "Resolve Dependencies", resolveDependenciesCommand));
