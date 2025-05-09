@@ -39,6 +39,7 @@ import {
   restartSwiftLSP,
   selectXcodeWorkspace,
 } from "./utils";
+import { askSchemeForTesting } from "../testing/utils";
 
 function writeWatchMarkers(terminal: TaskTerminal) {
   terminal.write("🍭 SweetPad: watch marker (start)\n");
@@ -867,7 +868,7 @@ export async function testCommand(execution: CommandExecution, item?: BuildTreeI
   const xcworkspace = await askXcodeWorkspacePath(execution.context);
   const scheme =
     item?.scheme ??
-    (await askSchemeForBuild(execution.context, { title: "Select scheme to test", xcworkspace: xcworkspace }));
+    await askSchemeForTesting(execution.context, { xcworkspace: xcworkspace, title: "Select a scheme to run tests" });
   const configuration = await askConfiguration(execution.context, { xcworkspace: xcworkspace });
 
   const buildSettings = await getBuildSettingsToAskDestination({
