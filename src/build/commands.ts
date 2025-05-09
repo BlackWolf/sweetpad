@@ -40,6 +40,7 @@ import {
   restartSwiftLSP,
   selectXcodeWorkspace,
 } from "./utils";
+import { buildForTestingCommand } from "../testing/commands";
 
 function writeWatchMarkers(terminal: TaskTerminal) {
   terminal.write("🍭 SweetPad: watch marker (start)\n");
@@ -546,7 +547,7 @@ export async function buildApp(
 
 export async function reindexCommand(execution: CommandExecution) {
   const xcworkspace = await askXcodeWorkspacePath(execution.context);
-  const scheme = await askSchemeForBuild(execution, {
+  const scheme = await askSchemeForBuild(execution.context, {
     title: "Select scheme for build server",
     xcworkspace: xcworkspace,
   });
