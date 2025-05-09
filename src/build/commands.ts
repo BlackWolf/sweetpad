@@ -12,6 +12,7 @@ import {
   getIsXcbeautifyInstalled,
   getIsXcodeBuildServerInstalled,
   getXcodeVersionInstalled,
+  isTestableScheme,
 } from "../common/cli/scripts";
 import { CommandExecution, ExtensionContext } from "../common/commands";
 import { getWorkspaceConfig, updateWorkspaceConfig } from "../common/config";
@@ -41,6 +42,7 @@ import {
 } from "./utils";
 import { DeviceDestination, iOSDeviceDestination } from "../devices/types";
 import { iOSSimulatorDestination, SimulatorDestination } from "../simulators/types";
+import { buildForTestingCommand } from "../testing/commands";
 
 function writeWatchMarkers(terminal: TaskTerminal) {
   terminal.write("🍭 SweetPad: watch marker (start)\n");
@@ -570,6 +572,28 @@ export async function buildApp(
   });
 
   await restartSwiftLSP();
+}
+
+export async function reindexCommand(execution: CommandExecution) {
+  const xcworkspace = await askXcodeWorkspacePath(execution.context);
+  const scheme = await askSchemeForBuild(execution, {
+    title: "Select scheme for build server",
+    xcworkspace: xcworkspace,
+  });
+
+  const isTestable = await isTestableScheme({
+    scheme: scheme,
+    configuration: "Debug", // TODO: get the actual configuration
+    sdk: undefined,
+    xcworkspace: xcworkspace
+  });
+
+  // TODO: Prevent if build is already running
+  if (isTestable) {
+    await buildForTestingCommand(execution)
+  } else {
+    await buildCommand(execution);
+  }
 }
 
 /**

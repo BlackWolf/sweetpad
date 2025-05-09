@@ -146,6 +146,20 @@ export class XcodeBuildSettings {
   }
 }
 
+export async function isTestableScheme(options: {
+  scheme: string;
+  configuration: string;
+  sdk: string | undefined;
+  xcworkspace: string;
+}): Promise<boolean> {
+  try {
+    await getBuildSettingsList({ ...options, action: "test" });
+    return true
+  } catch {
+    return false
+  }
+}
+
 /**
  * Extract build settings for the given scheme and configuration
  *
@@ -157,6 +171,7 @@ async function getBuildSettingsList(options: {
   configuration: string;
   sdk: string | undefined;
   xcworkspace: string;
+  action?: "build" | "test";
 }): Promise<XcodeBuildSettings[]> {
   const derivedDataPath = prepareDerivedDataPath();
 
@@ -170,6 +185,7 @@ async function getBuildSettingsList(options: {
     options.configuration,
     ...(derivedDataPath ? ["-derivedDataPath", derivedDataPath] : []),
     "-json",
+    ...(options.action ? [options.action] : []),
   ];
 
   if (options.sdk !== undefined) {

@@ -29,6 +29,7 @@ export class BuildManager {
       void this.generateXcodeBuildServerSettingsOnSchemeChange({
         scheme: scheme,
       });
+      void this.rebuildIndexesOnSchemeChange();
     });
   }
 
@@ -141,5 +142,9 @@ export class BuildManager {
           If you want to disable this feature, you can do it in the settings. This message is shown only once.
       `);
     }
+  }
+
+  rebuildIndexesOnSchemeChange() {
+    vscode.commands.executeCommand("sweetpad.build.reindex");
   }
 }
