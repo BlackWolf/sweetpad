@@ -11,6 +11,7 @@ import type { ExtensionContext } from "../common/commands";
 import { getWorkspaceConfig } from "../common/config";
 import { isFileExists } from "../common/files";
 import { askXcodeWorkspacePath, getCurrentXcodeWorkspacePath, getWorkspacePath, restartSwiftLSP } from "./utils";
+import { buildApp, buildCommand } from "./commands";
 
 type IEventMap = {
   updated: [];
@@ -29,6 +30,7 @@ export class BuildManager {
       void this.generateXcodeBuildServerSettingsOnSchemeChange({
         scheme: scheme,
       });
+      void this.rebuildIndexesOnSchemeChange();
     });
   }
 
@@ -141,5 +143,9 @@ export class BuildManager {
           If you want to disable this feature, you can do it in the settings. This message is shown only once.
       `);
     }
+  }
+
+  async rebuildIndexesOnSchemeChange() {
+    vscode.commands.executeCommand("sweetpad.build.reindex");
   }
 }

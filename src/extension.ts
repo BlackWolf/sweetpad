@@ -138,6 +138,7 @@ export function activate(context: vscode.ExtensionContext) {
   d(command("sweetpad.build.launch", launchCommand));
   d(command("sweetpad.build.run", runCommand));
   d(command("sweetpad.build.build", buildCommand));
+  d(command("sweetpad.build.reindex", buildCommand));
   d(command("sweetpad.build.clean", cleanCommand));
   d(command("sweetpad.build.test", testCommand));
   d(command("sweetpad.build.resolveDependencies", resolveDependenciesCommand));
