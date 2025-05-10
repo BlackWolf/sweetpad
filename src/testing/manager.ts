@@ -130,7 +130,7 @@ function* getAncestorsPaths(options: {
  * Custom data for test items
  */
 type TestItemContext = {
-  type: "class" | "method";
+  type: "class" | "method" | "file";
   spmTarget?: string;
 };
 
@@ -143,14 +143,14 @@ export class TestingManager {
   // "/Users/username/Projects/ControlRoom/ControlRoomTests/SimCtlSubCommandsTests.swift:10: error: -[ControlRoomTests.SimCtlSubCommandsTests testDeleteUnavailable] : failed: caught "NSInternalInconsistencyException", "Failed to delete unavailable device with UDID '00000000-0000-0000-0000-000000000000'."
   // "/Users/hyzyla/Developer/sweetpad-examples/ControlRoom/ControlRoomTests/Controllers/SimCtl+SubCommandsTests.swift:76: error: -[ControlRoomTests.SimCtlSubCommandsTests testDefaultsForApp] : XCTAssertEqual failed: ("1") is not equal to ("2")"
   // {filePath}:{lineNumber}: error: -[{classAndTargetName} {methodName}] : {errorMessage}
-  readonly INLINE_ERROR_REGEXP = /(.*):(\d+): error: -\[.* (.*)\] : (.*)/;
+  readonly INLINE_ERROR_REGEXP = /(.*):(\d+): error: -\[(.*)\.(.*) (.*)\] : (.*)/;
 
   // Find test method status lines
   // Example output:
   // "Test Case '-[ControlRoomTests.SimCtlSubCommandsTests testDeleteUnavailable]' started."
   // "Test Case '-[ControlRoomTests.SimCtlSubCommandsTests testDeleteUnavailable]' passed (0.001 seconds)."
   // "Test Case '-[ControlRoomTests.SimCtlSubCommandsTests testDeleteUnavailable]' failed (0.001 seconds).")
-  readonly METHOD_STATUS_REGEXP_MACOS = /Test Case '-\[(.*) (.*)\]' (.*)/;
+  readonly METHOD_STATUS_REGEXP_MACOS = /Test Case '-\[(.*)\.(.*) (.*)\]' (.*)/;
 
   // "Test case 'terminal23TesMakarenko1ts.testExample1()' failed on 'Clone 1 of iPhone 14 - terminal23 (27767)' (0.154 seconds)"
   // "Test case 'terminal23TesMakarenko1ts.testExample2()' passed on 'Clone 1 of iPhone 14 - terminal23 (27767)' (0.000 seconds)"
@@ -169,6 +169,17 @@ export class TestingManager {
 
     this.controller = vscode.tests.createTestController("sweetpad", "SweetPad");
 
+    this.controller.resolveHandler = async test => {
+      if (test) {
+        await this.updateChildrenTestItems(test);
+      } else {
+        await this.discoverAllFilesInWorkspace();
+      }
+    }
+
+    //xcodebuild test-without-building -workspace /Users/mario.schreiner/Documents/bank-ios.worktrees/BANKUIN-12988-ios-only-remove-debug-code-for-activatablelivecache-crash-issue/C24.xcworkspace -destination 'platform=iOS Simulator,id=841503D7-A246-4D7A-9A68-2FCB8820590F' -scheme FinancialReviewTests -only-testing\:C24/MonthlyFinancialReviewPageViewModelTests/testMonthlySavingsViewModel
+    //xcodebuild test-without-building -workspace /Users/mario.schreiner/Documents/bank-ios.worktrees/BANKUIN-12988-ios-only-remove-debug-code-for-activatablelivecache-crash-issue/C24.xcworkspace -destination 'platform=iOS Simulator,id=841503D7-A246-4D7A-9A68-2FCB8820590F' -scheme FinancialReviewTests -only-testing\:FinancialReviewTests/MonthlyFinancialReviewPageViewModelTests/testMonthlySavingsViewModel
+
     // Register event listeners for updating test items when documents change or open
     vscode.workspace.onDidOpenTextDocument((document) => this.updateTestItems(document));
     vscode.workspace.onDidChangeTextDocument((event) => this.updateTestItems(event.document));
@@ -177,6 +188,18 @@ export class TestingManager {
     for (const document of vscode.workspace.textDocuments) {
       this.updateTestItems(document);
     }
+
+    // We need to find all tests for a scheme (or even the entire project if possible)
+    // This is needed so:
+    // When running the "Tests" action we can properly show results in the test pane
+    // When running the "Test without Building" action we can properly show results in the test pane
+    // An example command to list tests is:
+    //xcodebuild -scheme FinancialReviewTests -configuration Debug -workspace /Users/mario.schreiner/Documents/bank-ios.worktrees/BANKUIN-12988-ios-only-remove-debug-code-for-activatablelivecache-crash-issue/C24.xcworkspace -destination 'platform=iOS Simulator,id=841503D7-A246-4D7A-9A68-2FCB8820590F' -resultBundlePath '/Users/mario.schreiner/Library/Application Support/Windsurf/User/workspaceStorage/2a296b98626076a67d0018135d7a529f/sweetpad.sweetpad/bundle/FinancialReviewTests3' -enumerate-tests test
+    // 
+    // However, it doesn't give us the files these tests are in and it takes a while to build
+    //
+    // An alternative could be to run all tests and then collect the results, populating the test run afterwards
+    // not sure if this is possible
 
     // Default for profile that is slow due to build step, but should work in most cases
     this.createRunProfile({
@@ -193,6 +216,46 @@ export class TestingManager {
       isDefault: false,
       run: (request, token) => this.runTestsWithoutBuilding(request, token),
     });
+  }
+
+  getOrCreateFile(uri: vscode.Uri) {
+    const existing = this.controller.items.get(uri.toString());
+    if (existing) {
+      return existing;
+    }
+  
+    const file = this.createTestItem({
+      id: uri.toString(),
+      label: uri.path.split('/').pop()!,
+      uri,
+      type: "file",
+    })
+    file.canResolveChildren = true;
+    this.controller.items.add(file);
+    return file;
+  }
+
+  async discoverAllFilesInWorkspace() {
+    if (!vscode.workspace.workspaceFolders) {
+      return []; 
+    }
+  
+    return Promise.all(
+      vscode.workspace.workspaceFolders.map(async workspaceFolder => {
+        const pattern = new vscode.RelativePattern(workspaceFolder, '**/*Tests.swift');
+        const watcher = vscode.workspace.createFileSystemWatcher(pattern);
+  
+        // When files are created, make sure there's a corresponding "file" node in the tree
+        watcher.onDidCreate(uri => this.getOrCreateFile(uri));
+        watcher.onDidDelete(uri => this.controller.items.delete(uri.toString()));
+  
+        for (const file of await vscode.workspace.findFiles(pattern)) {
+          this.getOrCreateFile(file);
+        }
+  
+        return watcher;
+      })
+    );
   }
 
   /**
@@ -261,6 +324,129 @@ export class TestingManager {
       type: options.type,
     });
     return testItem;
+  }
+
+  async updateChildrenTestItems(testItem: vscode.TestItem) {
+
+    //
+    // TODO: A lot of this code is a duplication of updateTestItems, refactor
+    //
+
+    if (!testItem.uri) {
+      return;
+    }
+
+    testItem.busy = true
+
+    const parentURI = testItem.uri;
+
+    // Remove existing test items for this document
+    // for (const testItem of this.controller.items) {
+    //   if (testItem[1].uri?.toString() === document.uri.toString()) {
+    //     this.controller.items.delete(testItem[0]);
+    //   }
+    // }
+
+    for(const child of testItem.children) {
+      this.controller.items.delete(child[0]);
+    }
+
+    // Check if this is a Swift file
+    // if (!document.fileName.endsWith(".swift")) {
+    //   return;
+    // }
+
+    // const text = document.getText();
+    const rawContent = await vscode.workspace.fs.readFile(testItem.uri);
+    const text = new TextDecoder().decode(rawContent);
+
+    // THis assumption does not always hold, tests might not derive from XCTestCase
+    // They could also derive from something that then derives from XCTestCase
+    // Instead of checking the file manually, we could maybe use this command:
+    // xcodebuild -scheme FinancialReviewTests -configuration Debug -workspace /Users/mario.schreiner/Documents/bank-ios.worktrees/BANKUIN-12988-ios-only-remove-debug-code-for-activatablelivecache-crash-issue/C24.xcworkspace -destination 'platform=iOS Simulator,id=841503D7-A246-4D7A-9A68-2FCB8820590F'  -enumerate-tests -verbose -only-testing\:FinancialReviewTests/MonthlyFinancialReviewPageViewModelTests test-without-building
+    // 
+    // The big problem here is that we cannot run this on files, only on schemes
+    // The output is like this:
+    //                 Class MonthylBudgetsViewModelTests (disabled)
+    //                 Test testAmount (disabled)
+    //                 Test testBudgets (disabled)
+    //                 Test testIconViewModel (disabled)
+    //                 Test testInfoText (disabled)
+    //                 Test testLimitTextAvailable (disabled)
+    //                 Test testLimitTextSpent (disabled)
+    //                 Test testOnTap (disabled)
+    //
+    // (disabled) is there if we used -only-testing and the test didn't match any of the listed tests
+    // But how can we map this to files?
+    // We would still have to look through every file, get all classes and then run the command to see if they match
+    // any tests.
+    //
+    // I think the best approach would be:
+    // Run -enumerate-tests for the selected test scheme and then look through all files
+    // To find the root of the scheme we can use this for xcode schemes:
+    // xcodebuild -showBuildSettings -scheme C24 -workspace /Users/mario.schreiner/Documents/bank-ios.worktrees/BANKUIN-12988-ios-only-remove-debug-code-for-activatablelivecache-crash-issue/C24.xcworkspace  
+    // for SPMs we probably need to look for all Package.swift files in the project and find the right one
+    // 
+    // Regex to find classes inheriting from XCTestCase
+    const classRegex = /class\s+(\w+)\s*:\s*XCTestCase\s*\{/g;
+    // let classMatch;
+    while (true) {
+      const classMatch = classRegex.exec(text);
+      if (classMatch === null) {
+        break;
+      }
+      const className = classMatch[1];
+      const classStartIndex = classMatch.index + classMatch[0].length;
+      // const classPosition = document.positionAt(classMatch.index);
+
+      const classTestItem = this.createTestItem({
+        id: className,
+        label: className,
+        uri: parentURI,
+        type: "class",
+      });
+      // classTestItem.range = new vscode.Range(classPosition, classPosition);
+      // this.controller.items.add(classTestItem);
+      // const classTestItem = this.controller.createTestItem(className, className, parentURI);
+      // classTestItem.canResolveChildren = true;
+      // this.controller.items.add(classTestItem);
+      testItem.children.add(classTestItem)
+
+      const classCode = extractCodeBlock(text, classStartIndex - 1); // Start from '{'
+
+      if (classCode === null) {
+        continue; // Could not find class code block
+      }
+
+      // Find all test methods within the class
+      const funcRegex = /func\s+(test\w+)\s*\(/g;
+
+      while (true) {
+        const funcMatch = funcRegex.exec(classCode);
+        if (funcMatch === null) {
+          break;
+        }
+        const testName = funcMatch[1];
+        const testStartIndex = classStartIndex + funcMatch.index;
+        // const position = document.positionAt(testStartIndex);
+
+        const funcTestItem = this.createTestItem({
+          id: `${className}.${testName}`,
+          label: testName,
+          uri: parentURI,
+          type: "method",
+        });
+
+        // testItem.range = new vscode.Range(position, position);
+        // classTestItem.children.add(testItem);
+
+        // const funcTestItem = this.controller.createTestItem(`${className}.${testName}`, testName, parentURI);
+        classTestItem.children.add(funcTestItem);
+        // this.controller.items.add(funcTestItem);
+      }
+    }
+
+    testItem.busy = false
   }
 
   /**
@@ -452,16 +638,15 @@ export class TestingManager {
    */
   async parseOutputLine(options: {
     line: string;
-    className: string;
     testRun: vscode.TestRun;
     runContext: XcodebuildTestRunContext;
   }) {
-    const { testRun, className, runContext } = options;
+    const { testRun, runContext } = options;
     const line = options.line.trim();
 
     const methodStatusMatchIOS = line.match(this.METHOD_STATUS_REGEXP_IOS);
     if (methodStatusMatchIOS) {
-      const [, , methodName, status] = methodStatusMatchIOS;
+      const [, className, methodName, status] = methodStatusMatchIOS;
       const methodTestId = `${className}.${methodName}`;
 
       const methodTest = runContext.getMethodTest(methodTestId);
@@ -488,7 +673,7 @@ export class TestingManager {
 
     const methodStatusMatchMacOS = line.match(this.METHOD_STATUS_REGEXP_MACOS);
     if (methodStatusMatchMacOS) {
-      const [, , methodName, status] = methodStatusMatchMacOS;
+      const [, , className, methodName, status] = methodStatusMatchMacOS;
       const methodTestId = `${className}.${methodName}`;
 
       const methodTest = runContext.getMethodTest(methodTestId);
@@ -515,7 +700,7 @@ export class TestingManager {
 
     const inlineErrorMatch = line.match(this.INLINE_ERROR_REGEXP);
     if (inlineErrorMatch) {
-      const [, filePath, lineNumber, methodName, errorMessage] = inlineErrorMatch;
+      const [, filePath, lineNumber, className, methodName, errorMessage] = inlineErrorMatch;
       const testId = `${className}.${methodName}`;
       runContext.addInlineError(testId, {
         fileName: filePath,
@@ -540,12 +725,49 @@ export class TestingManager {
       queue.push(...[...this.controller.items].map(([, item]) => item));
     }
 
-    // when class test is runned, all its method tests are runned too, so we need to filter out
-    // methods that should be runned as part of class test
+    // when a file is run, remove it and instead push all its children, which should be class tests
+    // const fileQueue: vscode.TestItem[] = [];
+    // return queue.filter((test) => {
+    //   const testContext = this.testItems.get(test);
+    //   if (!testContext) {
+    //     return true;
+    //   }
+    //   if (testContext.type == "file") {
+    //     if (test.children.size == 0) {
+    //       // TODO: await
+    //       this.updateChildrenTestItems(test)
+    //     }
+    //     test.children.forEach(item => fileQueue.push(item));
+    //     return false;
+    //   }
+    //   return true
+    //   // const [className, methodName] = test.id.split(".");
+    //   // if (!methodName) return true;
+    //   // return !queue.some((t) => t.id === className);
+    // });
+
+    // queue.push(...fileQueue);
+
+
+    // when a test is runned, all its children are runned too, so we need to filter out
+    // children that should be runned as part of their parent test
     return queue.filter((test) => {
-      const [className, methodName] = test.id.split(".");
-      if (!methodName) return true;
-      return !queue.some((t) => t.id === className);
+      // Check if this test is a child of any other test in the queue
+      return !queue.some((otherTest) => {
+        if (test.parent?.id === otherTest.id) {
+          return true;
+        }
+        
+        let currentParent = test.parent;
+        while (currentParent) {
+          if (currentParent.id === otherTest.id) {
+            return true;
+          }
+          currentParent = currentParent.parent;
+        }
+        
+        return false;
+      });
     });
   }
 
@@ -697,7 +919,24 @@ export class TestingManager {
         title: "Select a target to run tests",
       });
 
-      if (test.id.includes(".")) {
+      const testContext = this.testItems.get(test);
+      if (!testContext) {
+        return true;
+      }
+      if (testContext.type == "file") {
+        if (test.children.size == 0) {
+          await this.updateChildrenTestItems(test)
+        }
+
+        await this.runFileTest({
+          run: run,
+          fileTest: test,
+          scheme: scheme,
+          xcworkspace: xcworkspace,
+          destination: options.destination,
+          defaultTarget: defaultTarget,
+        });
+      } else if (test.id.includes(".")) {
         await this.runMethodTest({
           run: run,
           methodTest: test,
@@ -772,6 +1011,94 @@ export class TestingManager {
     }
   }
 
+  async runFileTest(options: {
+    run: vscode.TestRun;
+    fileTest: vscode.TestItem;
+    scheme: string;
+    xcworkspace: string;
+    destination: Destination;
+    defaultTarget: string | null;
+  }): Promise<void> {
+
+    // TODO: A lot of this code is a duplication of runClassTest, refactor
+
+    const { run, fileTest, scheme, defaultTarget } = options;
+    const className = fileTest.id;
+
+    const runContext = new XcodebuildTestRunContext({
+      methodTests: Array.from(fileTest.children, (child) => [...child[1].children]).flat(),
+    });
+
+    const destinationRaw = getXcodeBuildDestinationString({ destination: options.destination });
+
+    // Some test items like SPM packages have a separate target for tests, in other case we use
+    // the same target for all selected tests
+    const testTarget = this.testItems.get(fileTest)?.spmTarget ?? defaultTarget;
+    if (!testTarget) {
+      throw new Error("Test target is not defined");
+    }
+
+    run.started(fileTest);
+
+    try {
+      await runTask(this.context, {
+        name: "sweetpad.build.test",
+        lock: "sweetpad.build",
+        terminateLocked: true,
+        callback: async (terminal) => {
+          const args = [
+            "test-without-building",
+            "-workspace",
+            options.xcworkspace,
+            "-destination",
+            destinationRaw,
+            "-scheme",
+            scheme
+          ];
+          fileTest.children.forEach((childTest) => {
+            args.push(`-only-testing:${testTarget}/${childTest.id}`);
+          });
+          await terminal.execute({
+            command: "xcodebuild",
+            args: args,
+            onOutputLine: async (output) => {
+              await this.parseOutputLine({
+                line: output.value,
+                testRun: run,
+                runContext: runContext,
+              });
+            },
+          });
+        },
+      });
+    } catch (error) {
+      console.error("File test failed due to an error", error);
+      // Handle any errors during test execution
+      const errorMessage = `File test failed due to an error: ${error instanceof Error ? error.message : "Test failed"}`;
+      run.failed(fileTest, new vscode.TestMessage(errorMessage));
+
+      // Mark all unprocessed child tests as failed
+      for (const methodTest of runContext.getUnprocessedMethodTests()) {
+        run.failed(methodTest, new vscode.TestMessage("Test failed due to an error."));
+      }
+    } finally {
+      // Mark any unprocessed tests as skipped
+      for (const methodTest of runContext.getUnprocessedMethodTests()) {
+        run.skipped(methodTest);
+      }
+
+      // Determine the overall status of the test class
+      const overallStatus = runContext.getOverallStatus();
+      if (overallStatus === "failed") {
+        run.failed(fileTest, new vscode.TestMessage("One or more tests failed."));
+      } else if (overallStatus === "passed") {
+        run.passed(fileTest);
+      } else if (overallStatus === "skipped") {
+        run.skipped(fileTest);
+      }
+    }
+  }
+
   async runClassTest(options: {
     run: vscode.TestRun;
     classTest: vscode.TestItem;
@@ -820,7 +1147,6 @@ export class TestingManager {
               await this.parseOutputLine({
                 line: output.value,
                 testRun: run,
-                className: className,
                 runContext: runContext,
               });
             },
@@ -903,7 +1229,6 @@ export class TestingManager {
               await this.parseOutputLine({
                 line: output.value,
                 testRun: testRun,
-                className: className,
                 runContext: runContext,
               });
             },
