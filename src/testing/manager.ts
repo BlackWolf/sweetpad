@@ -242,7 +242,12 @@ export class TestingManager {
   
     return Promise.all(
       vscode.workspace.workspaceFolders.map(async workspaceFolder => {
-        const pattern = new vscode.RelativePattern(workspaceFolder, '**/*Tests.swift');
+        
+        //
+        // TODO: This doesn't work well – it will list all swift files in the test explorer but most of them will be empty
+        //
+        
+        const pattern = new vscode.RelativePattern(workspaceFolder, '**/*.swift');
         const watcher = vscode.workspace.createFileSystemWatcher(pattern);
   
         // When files are created, make sure there's a corresponding "file" node in the tree
