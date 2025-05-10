@@ -246,7 +246,7 @@ export class TestingManager {
         //
         // TODO: This doesn't work well – it will list all swift files in the test explorer but most of them will be empty
         //
-        
+
         const pattern = new vscode.RelativePattern(workspaceFolder, '**/*.swift');
         const watcher = vscode.workspace.createFileSystemWatcher(pattern);
   
@@ -402,6 +402,8 @@ export class TestingManager {
       }
       const className = classMatch[1];
       const classStartIndex = classMatch.index + classMatch[0].length;
+      // const classPosition = rawContent.subarray(0, classStartIndex).toString().split(/\r?\n/).reduce((total, line) => total + line.length + (line.includes('\r') ? 2 : 1), 0);
+
       // const classPosition = document.positionAt(classMatch.index);
 
       const classTestItem = this.createTestItem({
@@ -410,7 +412,9 @@ export class TestingManager {
         uri: parentURI,
         type: "class",
       });
-      // classTestItem.range = new vscode.Range(classPosition, classPosition);
+
+      const aclassStartIndex = this.positionFromOffset(text, classMatch.index);
+      classTestItem.range = new vscode.Range(aclassStartIndex, aclassStartIndex);
       // this.controller.items.add(classTestItem);
       // const classTestItem = this.controller.createTestItem(className, className, parentURI);
       // classTestItem.canResolveChildren = true;
@@ -431,8 +435,16 @@ export class TestingManager {
         if (funcMatch === null) {
           break;
         }
+
+        // const match = regex.exec(text);
+
+        const relativeFuncStartIndex = this.positionFromOffset(classCode, funcMatch.index);
+        const funcStartIndex = new vscode.Position(aclassStartIndex.line + relativeFuncStartIndex.line, aclassStartIndex.character + relativeFuncStartIndex.character);
+        // const end = this.positionFromOffset(text, funcMatch.index + funcMatch[0].length);
+        // const range = new vscode.Range(start, end);
+
         const testName = funcMatch[1];
-        const testStartIndex = classStartIndex + funcMatch.index;
+        // const testStartIndex = classStartIndex + funcMatch.index;
         // const position = document.positionAt(testStartIndex);
 
         const funcTestItem = this.createTestItem({
@@ -441,6 +453,7 @@ export class TestingManager {
           uri: parentURI,
           type: "method",
         });
+        funcTestItem.range = new vscode.Range(funcStartIndex, funcStartIndex);
 
         // testItem.range = new vscode.Range(position, position);
         // classTestItem.children.add(testItem);
@@ -451,8 +464,30 @@ export class TestingManager {
       }
     }
 
+    if (testItem.children.size == 0) {
+      this.controller.items.delete(testItem.id);
+    }
+
     testItem.busy = false
   }
+
+  positionFromOffset(text: string, offset: number): vscode.Position {
+    const lines = text.split(/\r?\n/);
+    let currentOffset = 0;
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const lineLength = line.length + (line.includes('\r') ? 2 : 1); // Account for \r\n or \n
+      if (currentOffset + lineLength > offset) {
+        return new vscode.Position(i, offset - currentOffset);
+      }
+      currentOffset += lineLength;
+    }
+    
+    // Fallback if offset is beyond text length
+    return new vscode.Position(lines.length - 1, lines[lines.length - 1].length);
+  }
+  
 
   /**
    * Find all test methods in the given document and update the test items in test controller
