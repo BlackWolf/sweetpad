@@ -144,6 +144,10 @@ export class XcodeBuildSettings {
       return platform as DestinationPlatform;
     });
   }
+
+  get sourceRoot(): string | undefined {
+    return this.settings.SOURCE_ROOT
+  }
 }
 
 /**
@@ -152,7 +156,7 @@ export class XcodeBuildSettings {
  * Pay attention that this function can return an empty array, if the build settings are not available.
  * Also it can return several build settings, if there are several targets assigned to the scheme.
  */
-async function getBuildSettingsList(options: {
+export async function getBuildSettingsList(options: {
   scheme: string;
   configuration: string;
   sdk: string | undefined;
@@ -208,6 +212,97 @@ async function getBuildSettingsList(options: {
     }
   }
   return [];
+}
+
+export class XcodeBuildEnumeratedTest {
+  public readonly className: string;
+  public readonly methodNames: string[];
+
+  constructor(className: string, methodNames: string[]) {
+    this.className = className;
+    this.methodNames = methodNames;
+  }
+}
+
+export async function enumerateTests(options: {
+  scheme: string;
+  destination: string;
+  // configuration: string;
+  // sdk: string | undefined;
+  xcworkspace: string;
+}): Promise<XcodeBuildEnumeratedTest[]> {
+  // const derivedDataPath = prepareDerivedDataPath();
+  // const destinationRaw = getXcodeBuildDestinationString({ destination: options.destination });
+
+  // TODO: THis will not work properly if the scheme has not been built before
+  // But The command will also not always throw an error, so hard to tell
+  // We need to check build outputs to see if we can detect that
+  // Always running build-without-teting before takes a lot of time
+  const args = [
+    // "-showBuildSettings",
+    "-enumerate-tests",
+    "-scheme",
+    options.scheme,
+    "-workspace",
+    options.xcworkspace,
+    "-destination",
+    options.destination,
+    // "-configuration",
+    // options.configuration,
+    // ...(derivedDataPath ? ["-derivedDataPath", derivedDataPath] : []),
+    // "-json",
+    "test-without-building"
+  ];
+
+  // if (options.sdk !== undefined) {
+  //   args.push("-sdk", options.sdk);
+  // }
+
+  const stdout = await exec({
+    command: "xcodebuild",
+    args: args,
+  });
+
+  // First few lines can be invalid json, so we need to skip them, untill we find "{" or "[" at the beginning of the line
+  const lines = stdout.split("\n");
+  var enumeratedTests: XcodeBuildEnumeratedTest[] = [];
+  var currentClass: XcodeBuildEnumeratedTest | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line) {
+      // commonLogger.warn("Empty line in build settings output", {
+      //   stdout: stdout,
+      //   index: i,
+      // });
+      continue;
+    }
+
+    if (line.trim().startsWith("Class")) {
+      const className = line.trim().split("Class ")[1];
+      currentClass = new XcodeBuildEnumeratedTest(className, []);
+      enumeratedTests.push(currentClass);
+    }
+
+    if (line.trim().startsWith("Test")) {
+      const methodName = line.trim().split("Test ")[1];
+      currentClass?.methodNames.push(methodName);
+    }
+
+    // if (line.startsWith("{") || line.startsWith("[")) {
+    //   const data = lines.slice(i).join("\n");
+    //   const output = JSON.parse(data) as BuildSettingsOutput;
+    //   if (output.length === 0) {
+    //     return [];
+    //   }
+    //   return output.map((output) => {
+    //     return new XcodeBuildSettings({
+    //       settings: output.buildSettings,
+    //       target: output.target,
+    //     });
+    //   });
+    // }
+  }
+  return enumeratedTests;
 }
 
 /**

@@ -2,7 +2,7 @@ import path from "node:path";
 import * as vscode from "vscode";
 import { getXcodeBuildDestinationString } from "../build/commands.js";
 import { askXcodeWorkspacePath, getWorkspacePath } from "../build/utils.js";
-import { getBuildSettingsToAskDestination } from "../common/cli/scripts.js";
+import { enumerateTests, getBuildSettingsList, getBuildSettingsToAskDestination, getSchemes } from "../common/cli/scripts.js";
 import type { ExtensionContext } from "../common/commands.js";
 import { errorReporting } from "../common/error-reporting.js";
 import { exec } from "../common/exec.js";
@@ -10,7 +10,7 @@ import { isFileExists } from "../common/files.js";
 import { commonLogger } from "../common/logger.js";
 import { runTask } from "../common/tasks.js";
 import type { Destination } from "../destination/types.js";
-import { askConfigurationForTesting, askDestinationToTestOn, askSchemeForTesting, askTestingTarget } from "./utils.js";
+import { askConfigurationForTesting, askDestinationToTestOn, askSchemeForTesting, askTestingTarget, getDestinationToTestOn } from "./utils.js";
 
 type TestingInlineError = {
   fileName: string;
@@ -169,25 +169,27 @@ export class TestingManager {
 
     this.controller = vscode.tests.createTestController("sweetpad", "SweetPad");
 
+    // this.updateTestsAfterSchemeChange();
+
     this.controller.resolveHandler = async test => {
       if (test) {
-        await this.updateChildrenTestItems(test);
+        // await this.updateChildrenTestItems(test);
       } else {
-        await this.discoverAllFilesInWorkspace();
+        await this.updateTestsAfterSchemeChange();
       }
     }
 
-    //xcodebuild test-without-building -workspace /Users/mario.schreiner/Documents/bank-ios.worktrees/BANKUIN-12988-ios-only-remove-debug-code-for-activatablelivecache-crash-issue/C24.xcworkspace -destination 'platform=iOS Simulator,id=841503D7-A246-4D7A-9A68-2FCB8820590F' -scheme FinancialReviewTests -only-testing\:C24/MonthlyFinancialReviewPageViewModelTests/testMonthlySavingsViewModel
-    //xcodebuild test-without-building -workspace /Users/mario.schreiner/Documents/bank-ios.worktrees/BANKUIN-12988-ios-only-remove-debug-code-for-activatablelivecache-crash-issue/C24.xcworkspace -destination 'platform=iOS Simulator,id=841503D7-A246-4D7A-9A68-2FCB8820590F' -scheme FinancialReviewTests -only-testing\:FinancialReviewTests/MonthlyFinancialReviewPageViewModelTests/testMonthlySavingsViewModel
+    // //xcodebuild test-without-building -workspace /Users/mario.schreiner/Documents/bank-ios.worktrees/BANKUIN-12988-ios-only-remove-debug-code-for-activatablelivecache-crash-issue/C24.xcworkspace -destination 'platform=iOS Simulator,id=841503D7-A246-4D7A-9A68-2FCB8820590F' -scheme FinancialReviewTests -only-testing\:C24/MonthlyFinancialReviewPageViewModelTests/testMonthlySavingsViewModel
+    // //xcodebuild test-without-building -workspace /Users/mario.schreiner/Documents/bank-ios.worktrees/BANKUIN-12988-ios-only-remove-debug-code-for-activatablelivecache-crash-issue/C24.xcworkspace -destination 'platform=iOS Simulator,id=841503D7-A246-4D7A-9A68-2FCB8820590F' -scheme FinancialReviewTests -only-testing\:FinancialReviewTests/MonthlyFinancialReviewPageViewModelTests/testMonthlySavingsViewModel
 
-    // Register event listeners for updating test items when documents change or open
-    vscode.workspace.onDidOpenTextDocument((document) => this.updateTestItems(document));
-    vscode.workspace.onDidChangeTextDocument((event) => this.updateTestItems(event.document));
+    // // Register event listeners for updating test items when documents change or open
+    // vscode.workspace.onDidOpenTextDocument((document) => this.updateTestItems(document));
+    // vscode.workspace.onDidChangeTextDocument((event) => this.updateTestItems(event.document));
 
-    // Initialize test items for already open documents
-    for (const document of vscode.workspace.textDocuments) {
-      this.updateTestItems(document);
-    }
+    // // Initialize test items for already open documents
+    // for (const document of vscode.workspace.textDocuments) {
+    //   this.updateTestItems(document);
+    // }
 
     // We need to find all tests for a scheme (or even the entire project if possible)
     // This is needed so:
@@ -209,6 +211,13 @@ export class TestingManager {
       run: (request, token) => this.buildAndRunTests(request, token),
     });
 
+    //
+    // TODO: Running a module test from C24 scheme doesn't work
+    // but probably it should?
+    // If not, we should not detect them
+    // In xcode it works, I think we are passing the wrong scheme to -only-testing here (c24 instead of C24 MockdTests)
+    //
+
     // Profile for running tests without building, should be faster but you may need to build manually
     this.createRunProfile({
       name: "Run Tests Without Building",
@@ -217,6 +226,182 @@ export class TestingManager {
       run: (request, token) => this.runTestsWithoutBuilding(request, token),
     });
   }
+
+  async updateTestsAfterSchemeChange() {
+    if (!this._context) {
+      // TODO: Return is Wrong
+      return;
+    }
+
+    const scheme = this.context.buildManager.getDefaultSchemeForTesting();
+    if (!scheme) {
+      return;
+    }
+
+    const destination = await getDestinationToTestOn(this.context, null);
+    if (!destination) {
+      return;
+    }
+
+    const destinationRaw = getXcodeBuildDestinationString({ destination: destination });
+    const xcworkspace = await askXcodeWorkspacePath(this.context);
+
+    // Find root of scheme
+    var sourceRoot: string | undefined;
+    try {
+      // TODO: Should this be the first thing we try really? 
+      const buildSettings = await getBuildSettingsList({
+        scheme: scheme,
+        configuration: "Debug",
+        sdk: undefined,
+        xcworkspace: xcworkspace,
+      });
+      sourceRoot = buildSettings[0].sourceRoot
+    } catch (e) {
+      if (!vscode.workspace.workspaceFolders) {
+        return;
+      }
+      await Promise.all(
+
+        // TODO: Add quick-try here where we search for something like schemeName/Package.swift, which should usaully
+        // lead to a result first try
+
+        vscode.workspace.workspaceFolders.map(async workspaceFolder => {
+          const pattern = new vscode.RelativePattern(workspaceFolder, '**/Package.swift');
+          const watcher = vscode.workspace.createFileSystemWatcher(pattern);
+
+          for (const file of await vscode.workspace.findFiles(pattern)) {
+            if (file.path.includes("DerivedData") || file.path.includes(".build")) {
+              continue;
+            }
+            if (await this.doesPackageFileMatchScheme(file, scheme)) {
+              sourceRoot = file.path.replace("/Package.swift", "") + "/Tests";
+              break;
+            }
+          }
+
+          watcher.dispose();
+        }));
+    }
+
+    if (!sourceRoot) {
+      return;
+    }
+
+    const tests = await enumerateTests({
+      scheme: scheme,
+      destination: destinationRaw,
+      xcworkspace: xcworkspace,
+    });
+
+    for (const test of tests) {
+      const pattern = new vscode.RelativePattern(sourceRoot, '**/*.swift');
+      const watcher = vscode.workspace.createFileSystemWatcher(pattern);
+
+      var uri = vscode.Uri.file(test.className);
+      for (const file of await vscode.workspace.findFiles(pattern)) {
+        // check if file contains class name
+        // TODO: This is of course not a good way, we need to look into every file
+        // This is too expensive, though, can we do it smarter?
+        // Maybe exec some find?
+        // For large sourceRoots this will be very slow. It is already slow now it seems.
+        //find "${sourceRoot}" -type f -name "*.swift" -print0 | xargs -0 grep -l "class ${test.className}"
+        // const files = await exec({
+        //   command: "find",
+        //   args: [
+        //     sourceRoot,
+        //     "-type", "f",
+        //     "-name", "*.swift",
+        //     "-print0",
+        //     "|",
+        //     "xargs", "-0",
+        //     "grep", "-l",
+        //     `class ${test.className}`
+        //   ],
+        //   shell: true
+        // });
+        // To search all classnames:
+        // find "${sourceRoot}" -type f -name "*.swift" -print0 | xargs -0 grep -l -E "class (ClassName1|ClassName2|ClassName3)"
+        // or
+        // find "${sourceRoot}" -type f -name "*.swift" -print0 | xargs -0 grep -l -e "class ClassName1" -e "class ClassName2" -e "class ClassName3"
+        // async function findTestFiles(sourceRoot: string, classNames: string[]): Promise<Record<string, string>> {
+        //   const pattern = classNames.map(className => `class ${className}`).join('|');
+        //   const command = `find "${sourceRoot}" -type f -name "*.swift" -print0 | xargs -0 grep -l -E "${pattern}"`;
+          
+        //   const output = await exec({
+        //     command: 'bash',
+        //     args: ['-c', command],
+        //     shell: true
+        //   });
+          
+        //   const files = output.split('\n').filter(Boolean);
+        //   const result: Record<string, string> = {};
+          
+        //   for (const file of files) {
+        //     const content = await fs.readFile(file, 'utf8');
+        //     for (const className of classNames) {
+        //       if (content.includes(`class ${className}`)) {
+        //         result[className] = file;
+        //         break;
+        //       }
+        //     }
+        //   }
+          
+        //   return result;
+        // }
+        if (file.path.includes(test.className)) {
+          uri = file;
+        }
+      }
+
+      watcher.dispose();
+
+      const classItem = this.createTestItem({
+        id: test.className,
+        label: test.className,
+        uri: uri,
+        type: "class",
+      })
+
+      for (const method of test.methodNames) {
+        const methodItem = this.createTestItem({
+          id: `${test.className}.${method}`,
+          label: method,
+          uri: uri,
+          type: "method",
+        })
+        // TODO: Find range
+        classItem.children.add(methodItem);
+      }
+
+      this.controller.items.add(classItem);
+    }
+  }
+
+  async doesPackageFileMatchScheme(
+    packagePath: vscode.Uri, 
+    scheme: string
+  ): Promise<boolean> {
+    try {
+      const stdout = await exec({
+        command: "swift",
+        args: ["package", "dump-package"],
+        cwd: packagePath.path.replace("/Package.swift", ""),
+      });
+      const stdoutJson = JSON.parse(stdout);
+
+      const targets = stdoutJson.targets;
+      const testTargetNames = targets
+        ?.filter((target: any) => target.type === "test")
+        .filter((target: any) => target.name.includes(scheme));
+
+      return testTargetNames.length > 0;
+    } catch (error) {
+      return false;
+    }
+  }
+    
+  
 
   getOrCreateFile(uri: vscode.Uri) {
     const existing = this.controller.items.get(uri.toString());

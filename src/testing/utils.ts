@@ -92,9 +92,26 @@ export async function askDestinationToTestOn(
   context: ExtensionContext,
   buildSettings: XcodeBuildSettings | null,
 ): Promise<Destination> {
+  const destination = await getDestinationToTestOn(context, buildSettings);
+  if (destination) {
+    return destination;
+  }
   // We can remove platforms that are not supported by the project
   const supportedPlatforms = buildSettings?.supportedPlatforms;
+  const destinations = await context.destinationsManager.getDestinations({
+    mostUsedSort: true,
+  });
 
+  return await selectDestinationForTesting(context, {
+    destinations: destinations,
+    supportedPlatforms: supportedPlatforms,
+  });
+}
+
+export async function getDestinationToTestOn(
+  context: ExtensionContext,
+  buildSettings: XcodeBuildSettings | null,
+): Promise<Destination | undefined> {
   const destinations = await context.destinationsManager.getDestinations({
     mostUsedSort: true,
   });
@@ -110,10 +127,7 @@ export async function askDestinationToTestOn(
     }
   }
 
-  return await selectDestinationForTesting(context, {
-    destinations: destinations,
-    supportedPlatforms: supportedPlatforms,
-  });
+  return undefined;
 }
 
 export async function selectDestinationForTesting(
