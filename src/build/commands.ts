@@ -576,7 +576,7 @@ export async function buildApp(
 
 export async function reindexCommand(execution: CommandExecution) {
   const xcworkspace = await askXcodeWorkspacePath(execution.context);
-  const scheme = await askSchemeForBuild(execution, {
+  const scheme = await askSchemeForBuild(execution.context, {
     title: "Select scheme for build server",
     xcworkspace: xcworkspace,
   });

@@ -3,7 +3,7 @@ import * as vscode from "vscode";
 import { getXcodeBuildDestinationString } from "../build/commands.js";
 import { askXcodeWorkspacePath, getWorkspacePath } from "../build/utils.js";
 import { getBuildSettingsToAskDestination } from "../common/cli/scripts.js";
-import type { CommandExecution, ExtensionContext } from "../common/commands.js";
+import type { ExtensionContext } from "../common/commands.js";
 import { errorReporting } from "../common/error-reporting.js";
 import { exec } from "../common/exec.js";
 import { isFileExists } from "../common/files.js";
@@ -338,7 +338,7 @@ export class TestingManager {
   /**
    * Ask common configuration options for running tests
    */
-  async askTestingConfigurations(execution?: CommandExecution): Promise<{
+  async askTestingConfigurations(): Promise<{
     xcworkspace: string;
     scheme: string;
     configuration: string;
@@ -348,7 +348,7 @@ export class TestingManager {
     // configuration for building the project
 
     const xcworkspace = await askXcodeWorkspacePath(this.context);
-    const scheme = await askSchemeForTesting(execution ?? this.context, {
+    const scheme = await askSchemeForTesting(this.context, {
       xcworkspace: xcworkspace,
       title: "Select a scheme to run tests",
     });
@@ -382,7 +382,7 @@ export class TestingManager {
       destination: destination,
       scheme: scheme,
       xcworkspace: xcworkspace,
-    }, execution);
+    });
   }
 
   /**
@@ -726,12 +726,11 @@ export class TestingManager {
    */
   async runTestsWithoutBuilding(
     request: vscode.TestRunRequest, 
-    token: vscode.CancellationToken, 
-    execution?: CommandExecution
+    token: vscode.CancellationToken
   ) {
     const run = this.controller.createTestRun(request);
     try {
-      const { scheme, destination, xcworkspace } = await this.askTestingConfigurations(execution);
+      const { scheme, destination, xcworkspace } = await this.askTestingConfigurations();
 
       // todo: add check if project is already built
 
