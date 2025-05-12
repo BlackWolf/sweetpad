@@ -911,6 +911,8 @@ export async function cleanCommand(context: ExtensionContext, item?: BuildTreeIt
   });
 }
 
+// TODO: This should be run via TestManager, so results are shown in the test results pane
+
 export async function testCommand(context: ExtensionContext, item?: BuildTreeItem) {
   context.updateProgressStatus("Searching for workspace");
   const xcworkspace = await askXcodeWorkspacePath(context);
