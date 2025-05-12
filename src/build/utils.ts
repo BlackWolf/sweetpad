@@ -77,6 +77,7 @@ export async function askDestinationToRunOn(
   // We can remove platforms that are not supported by the project
   const supportedPlatforms = buildSettings?.supportedPlatforms;
 
+  context.updateProgressStatus("Searching for destinations");
   const destinations = await context.destinationsManager.getDestinations({
     mostUsedSort: true,
   });
@@ -188,11 +189,7 @@ export async function askSchemeForBuild(
     ignoreCache?: boolean;
   },
 ): Promise<string> {
-  const context = executionContext instanceof ExtensionContext ? executionContext : executionContext.context;
-
-  if (executionContext instanceof CommandExecution) {
-    executionContext.setStatusText("Retrieving scheme…");
-  }
+  context.updateProgressStatus("Searching for scheme");
 
   const cachedScheme = context.buildManager.getDefaultSchemeForBuild();
   if (cachedScheme && !options.ignoreCache) {
@@ -319,11 +316,7 @@ export async function askConfiguration(
     xcworkspace: string;
   },
 ): Promise<string> {
-  const context = executionContext instanceof ExtensionContext ? executionContext : executionContext.context;
-
-  if (executionContext instanceof CommandExecution) {
-    executionContext.setStatusText("Retrieving build configuration…");
-  }
+  context.updateProgressStatus("Searching for build configuration");
 
   const fromConfig = getWorkspaceConfig("build.configuration");
   if (fromConfig) {

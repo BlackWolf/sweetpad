@@ -49,9 +49,11 @@ import { SimulatorsManager } from "./simulators/manager.js";
 import {
   createIssueGenericCommand,
   createIssueNoSchemesCommand,
+  openTerminalPanel,
   resetSweetpadCache,
   testErrorReportingCommand,
 } from "./system/commands.js";
+import { ProgressStatusBar } from "./system/status-bar.js";
 import {
   buildForTestingCommand,
   selectConfigurationForTestingCommand,
@@ -89,8 +91,8 @@ export function activate(context: vscode.ExtensionContext) {
   });
   const toolsManager = new ToolsManager();
   const testingManager = new TestingManager();
-
   const formatter = new SwiftFormattingProvider();
+  const progressStatusBar = new ProgressStatusBar();
 
   // Main context object 🌍
   const _context = new ExtensionContext({
@@ -100,12 +102,14 @@ export function activate(context: vscode.ExtensionContext) {
     toolsManager: toolsManager,
     testingManager: testingManager,
     formatter: formatter,
+    progressStatusBar: progressStatusBar,
   });
   // Here is circular dependency, but I don't care
   buildManager.context = _context;
   devicesManager.context = _context;
   destinationsManager.context = _context;
   testingManager.context = _context;
+  progressStatusBar.context = _context;
 
   // Trees 🎄
   const buildTreeProvider = new BuildTreeProvider({
@@ -209,10 +213,11 @@ export function activate(context: vscode.ExtensionContext) {
   d(command("sweetpad.tools.documentation", "Open Tool Documentation", openDocumentationCommand));
 
   // System
-  d(command("sweetpad.system.resetSweetpadCache", "Reset Sweetpad Cache", resetSweetpadCache));
-  d(command("sweetpad.system.createIssue.generic", "Create Issue", createIssueGenericCommand));
-  d(command("sweetpad.system.createIssue.noSchemes", "Create Issue (No Schemes)", createIssueNoSchemesCommand));
-  d(command("sweetpad.system.testErrorReporting", "Test Error Reporting", testErrorReportingCommand));
+  d(command("sweetpad.system.resetSweetpadCache", resetSweetpadCache));
+  d(command("sweetpad.system.createIssue.generic", createIssueGenericCommand));
+  d(command("sweetpad.system.createIssue.noSchemes", createIssueNoSchemesCommand));
+  d(command("sweetpad.system.testErrorReporting", testErrorReportingCommand));
+  d(command("sweetpad.system.openTerminalPanel", openTerminalPanel));
 }
 
 export function deactivate() {}
