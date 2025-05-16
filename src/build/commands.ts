@@ -24,8 +24,6 @@ import { showInputBox } from "../common/quick-pick";
 import { type Command, type TaskTerminal, runTask } from "../common/tasks";
 import { assertUnreachable } from "../common/types";
 import type { Destination } from "../destination/types";
-import type { DeviceDestination } from "../devices/types";
-import type { SimulatorDestination } from "../simulators/types";
 import { getSimulatorByUdid } from "../simulators/utils";
 import { DEFAULT_BUILD_PROBLEM_MATCHERS } from "./constants";
 import {
@@ -64,7 +62,7 @@ async function ensureAppPathExists(appPath: string | undefined): Promise<string>
 }
 
 export async function runOnMac(
-  executionContext: ExtensionContext | CommandExecution,
+  context: ExtensionContext,
   terminal: TaskTerminal,
   options: {
     scheme: string;
@@ -102,7 +100,7 @@ export async function runOnMac(
 }
 
 export async function runOniOSSimulator(
-  executionContext: ExtensionContext | CommandExecution,
+  context: ExtensionContext,
   terminal: TaskTerminal,
   options: {
     scheme: string;
@@ -125,7 +123,6 @@ export async function runOniOSSimulator(
     sdk: options.sdk,
     xcworkspace: options.xcworkspace,
   });
-  const context = executionContext instanceof ExtensionContext ? executionContext : executionContext.context;
 
   const appPath = await ensureAppPathExists(buildSettings.appPath);
   const bundlerId = buildSettings.bundleIdentifier;
@@ -194,7 +191,7 @@ export async function runOniOSSimulator(
 }
 
 export async function runOniOSDevice(
-  executionContext: ExtensionContext | CommandExecution,
+  context: ExtensionContext,
   terminal: TaskTerminal,
   option: {
     scheme: string;
@@ -479,7 +476,7 @@ class XcodeCommandBuilder {
 }
 
 export async function buildApp(
-  executionContext: ExtensionContext | CommandExecution,
+  context: ExtensionContext,
   terminal: TaskTerminal,
   options: {
     scheme: string;
@@ -493,7 +490,6 @@ export async function buildApp(
     debug: boolean;
   },
 ) {
-  const context = executionContext instanceof ExtensionContext ? executionContext : executionContext.context;
   const useXcbeatify = isXcbeautifyEnabled() && (await getIsXcbeautifyInstalled());
   const bundlePath = await prepareBundleDir(context, options.scheme);
   const derivedDataPath = prepareDerivedDataPath();
@@ -574,9 +570,9 @@ export async function buildApp(
   await restartSwiftLSP();
 }
 
-export async function reindexCommand(execution: CommandExecution) {
-  const xcworkspace = await askXcodeWorkspacePath(execution.context);
-  const scheme = await askSchemeForBuild(execution.context, {
+export async function reindexCommand(context: ExtensionContext) {
+  const xcworkspace = await askXcodeWorkspacePath(context);
+  const scheme = await askSchemeForBuild(context, {
     title: "Select scheme for build server",
     xcworkspace: xcworkspace,
   });
@@ -590,9 +586,9 @@ export async function reindexCommand(execution: CommandExecution) {
 
   // TODO: Prevent if build is already running
   if (isTestable) {
-    await buildForTestingCommand(execution)
+    await buildForTestingCommand(context)
   } else {
-    await buildCommand(execution);
+    await buildCommand(context);
   }
 }
 
@@ -1146,7 +1142,7 @@ export async function selectConfigurationForBuildCommand(context: ExtensionConte
     xcworkspace: xcworkspace,
   });
 
-  execution.setStatusText("")
+  context.updateProgressStatus("")
   let selected: string | undefined;
   if (configurations.length === 0) {
     selected = await showInputBox({
