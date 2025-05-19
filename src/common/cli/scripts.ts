@@ -287,20 +287,6 @@ export async function enumerateTests(options: {
       const methodName = line.trim().split("Test ")[1];
       currentClass?.methodNames.push(methodName);
     }
-
-    // if (line.startsWith("{") || line.startsWith("[")) {
-    //   const data = lines.slice(i).join("\n");
-    //   const output = JSON.parse(data) as BuildSettingsOutput;
-    //   if (output.length === 0) {
-    //     return [];
-    //   }
-    //   return output.map((output) => {
-    //     return new XcodeBuildSettings({
-    //       settings: output.buildSettings,
-    //       target: output.target,
-    //     });
-    //   });
-    // }
   }
   return enumeratedTests;
 }

@@ -2,10 +2,10 @@ import path from "node:path";
 import * as vscode from "vscode";
 import { getXcodeBuildDestinationString } from "../build/commands.js";
 import { askXcodeWorkspacePath, getWorkspacePath } from "../build/utils.js";
-import { enumerateTests, getBuildSettingsList, getBuildSettingsToAskDestination, getSchemes } from "../common/cli/scripts.js";
+import { enumerateTests, getBuildSettingsList, getBuildSettingsToAskDestination, XcodeBuildEnumeratedTest } from "../common/cli/scripts.js";
 import type { ExtensionContext } from "../common/commands.js";
 import { errorReporting } from "../common/error-reporting.js";
-import { exec } from "../common/exec.js";
+import { exec, execStreaming } from "../common/exec.js";
 import { isFileExists } from "../common/files.js";
 import { commonLogger } from "../common/logger.js";
 import { runTask } from "../common/tasks.js";
@@ -137,6 +137,7 @@ type TestItemContext = {
 export class TestingManager {
   controller: vscode.TestController;
   private _context: ExtensionContext | undefined;
+  private currentSourceRoot: string | undefined;
 
   // Inline error messages, usually is between "passed" and "failed" lines. Seems like only macOS apps have this line.
   // Example output:
@@ -164,6 +165,8 @@ export class TestingManager {
   // Root folder of the workspace (VSCode, not Xcode)
   readonly workspacePath: string;
 
+  // Access to extension context through getter/setter is managed elsewhere in the class
+
   constructor() {
     this.workspacePath = getWorkspacePath();
 
@@ -173,6 +176,7 @@ export class TestingManager {
 
     this.controller.resolveHandler = async test => {
       if (test) {
+        await this.updateURIOfTest(test);
         // await this.updateChildrenTestItems(test);
       } else {
         await this.updateTestsAfterSchemeChange();
@@ -208,7 +212,7 @@ export class TestingManager {
       name: "Build and Run Tests",
       kind: vscode.TestRunProfileKind.Run,
       isDefault: true,
-      run: (request, token) => this.buildAndRunTests(request, token),
+      run: (request: vscode.TestRunRequest, token: vscode.CancellationToken) => this.buildAndRunTests(request, token),
     });
 
     //
@@ -223,9 +227,166 @@ export class TestingManager {
       name: "Run Tests Without Building",
       kind: vscode.TestRunProfileKind.Run,
       isDefault: false,
-      run: (request, token) => this.runTestsWithoutBuilding(request, token),
+      run: (request: vscode.TestRunRequest, token: vscode.CancellationToken) => this.runTestsWithoutBuilding(request, token),
     });
   }
+
+  async addURIToAllTests() {
+    return new Promise<void>((resolve) => {
+      let itemFound = false;
+      const controller = new AbortController();
+      
+      // const classNames = tests.map(test => `class ${test.className}`).join("|");
+      // const stdout = await exec({
+      //   command: "grep",
+      //   args: ["-rnE", "--include", `*.swift`, "--exclude-dir={Pods,.build,DerivedData}", classNames, this.currentSourceRoot!],
+      // });
+
+      const classNames = Array.from(this.controller.items).map(test => ["-e", `class ${test[1].label}`]).flat();
+
+      // const classNames = Array.from(this.testItems).flatMap(test => ["-e", `class ${test.className}`]);
+      // const stdout = await exec({
+      //   command: "grep",
+        
+      // });
+      // console.log('Start streaming for ' + test.label);
+      execStreaming({
+        command: "grep",
+        args: [
+          "-rl", 
+          "--include", `*.swift`, 
+          "--exclude-dir={Pods,.build,DerivedData}", 
+          ...classNames, 
+          this.currentSourceRoot!
+        ],
+        // args: [
+        //   "-rl",
+        //   "--include",
+        //   "*.swift",
+        //   "--exclude-dir={Pods,.build,DerivedData}",
+        //   `class ${test.label}`,
+        //   this.currentSourceRoot!,
+        // ],
+        onStdout: (line) => {
+          console.log('Found line: ' + line);
+          if (!line.trim()) return;
+
+          const candidatePath = line.trim();
+          if (!candidatePath) return;
+
+          // TODO: We also need to print the match for each line
+          //       Then find the testitem for that line
+          //       Then update the testitem
+          // TODO: Limit the amount of CPU grep can use, right now it will 100% CPU
+
+          const uri = vscode.Uri.file(candidatePath);
+
+          const classItem = this.createTestItem({
+            id: test.id,
+            label: test.label,
+            uri: uri,
+            type: "class",
+          });
+          // classItem.canResolveChildren = true
+
+          for (const child of test.children) {
+            const methodItem = this.createTestItem({
+              id: child[1].id,
+              label: child[1].label,
+              uri: uri,
+              type: "method",
+            });
+            // TODO: Find range
+            classItem.children.add(methodItem);
+          }
+
+          this.controller.items.delete(test.id);
+          this.controller.items.add(classItem);
+          
+          // Mark that we've found and created a test item and cancel the command
+          console.log('Done, aborting stream')
+          itemFound = true;
+          controller.abort(); // Cancel the command since we found what we needed
+          resolve();
+        },
+        onClose: (code) => {
+          // If no item was found when the process completes, resolve the promise anyway
+          if (!itemFound) {
+            resolve();
+          }
+        },
+        signal: controller.signal
+      });
+    });
+  }
+  async updateURIOfTest(test: vscode.TestItem) {
+    if (test.uri) {
+      return;
+    }
+
+    return new Promise<void>((resolve) => {
+      let itemFound = false;
+      const controller = new AbortController();
+      
+      console.log('Start streaming for ' + test.label);
+      execStreaming({
+        command: "grep",
+        args: [
+          "-rl",
+          "--include",
+          "*.swift",
+          "--exclude-dir={Pods,.build,DerivedData}",
+          `class ${test.label}`,
+          this.currentSourceRoot!,
+        ],
+        onStdout: (line) => {
+          console.log('Found line: ' + line);
+          if (!line.trim()) return;
+
+          const candidatePath = line.trim();
+          if (!candidatePath) return;
+
+          const uri = vscode.Uri.file(candidatePath);
+
+          const classItem = this.createTestItem({
+            id: test.id,
+            label: test.label,
+            uri: uri,
+            type: "class",
+          });
+          // classItem.canResolveChildren = true
+
+          for (const child of test.children) {
+            const methodItem = this.createTestItem({
+              id: child[1].id,
+              label: child[1].label,
+              uri: uri,
+              type: "method",
+            });
+            // TODO: Find range
+            classItem.children.add(methodItem);
+          }
+
+          this.controller.items.delete(test.id);
+          this.controller.items.add(classItem);
+          
+          // Mark that we've found and created a test item and cancel the command
+          console.log('Done, aborting stream')
+          itemFound = true;
+          controller.abort(); // Cancel the command since we found what we needed
+          resolve();
+        },
+        onClose: (code) => {
+          // If no item was found when the process completes, resolve the promise anyway
+          if (!itemFound) {
+            resolve();
+          }
+        },
+        signal: controller.signal
+      });
+    });
+  }
+
 
   async updateTestsAfterSchemeChange() {
     if (!this._context) {
@@ -247,7 +408,7 @@ export class TestingManager {
     const xcworkspace = await askXcodeWorkspacePath(this.context);
 
     // Find root of scheme
-    var sourceRoot: string | undefined;
+    this.currentSourceRoot = undefined;
     try {
       // TODO: Should this be the first thing we try really? 
       const buildSettings = await getBuildSettingsList({
@@ -256,7 +417,7 @@ export class TestingManager {
         sdk: undefined,
         xcworkspace: xcworkspace,
       });
-      sourceRoot = buildSettings[0].sourceRoot
+      this.currentSourceRoot = buildSettings[0].sourceRoot;
     } catch (e) {
       if (!vscode.workspace.workspaceFolders) {
         return;
@@ -275,7 +436,7 @@ export class TestingManager {
               continue;
             }
             if (await this.doesPackageFileMatchScheme(file, scheme)) {
-              sourceRoot = file.path.replace("/Package.swift", "") + "/Tests";
+              this.currentSourceRoot = file.path.replace("/Package.swift", "") + "/Tests";
               break;
             }
           }
@@ -284,7 +445,8 @@ export class TestingManager {
         }));
     }
 
-    if (!sourceRoot) {
+    if (!this.currentSourceRoot) {
+      console.error('Source root is required for test discovery');
       return;
     }
 
@@ -295,73 +457,118 @@ export class TestingManager {
     });
 
     for (const test of tests) {
-      const pattern = new vscode.RelativePattern(sourceRoot, '**/*.swift');
-      const watcher = vscode.workspace.createFileSystemWatcher(pattern);
+      const classItem = this.createTestItem({
+        id: test.className,
+        label: test.className,
+        uri: undefined,
+        type: "class",
+      });
+      classItem.canResolveChildren = true
 
-      var uri = vscode.Uri.file(test.className);
-      for (const file of await vscode.workspace.findFiles(pattern)) {
-        // check if file contains class name
-        // TODO: This is of course not a good way, we need to look into every file
-        // This is too expensive, though, can we do it smarter?
-        // Maybe exec some find?
-        // For large sourceRoots this will be very slow. It is already slow now it seems.
-        //find "${sourceRoot}" -type f -name "*.swift" -print0 | xargs -0 grep -l "class ${test.className}"
-        // const files = await exec({
-        //   command: "find",
-        //   args: [
-        //     sourceRoot,
-        //     "-type", "f",
-        //     "-name", "*.swift",
-        //     "-print0",
-        //     "|",
-        //     "xargs", "-0",
-        //     "grep", "-l",
-        //     `class ${test.className}`
-        //   ],
-        //   shell: true
-        // });
-        // To search all classnames:
-        // find "${sourceRoot}" -type f -name "*.swift" -print0 | xargs -0 grep -l -E "class (ClassName1|ClassName2|ClassName3)"
-        // or
-        // find "${sourceRoot}" -type f -name "*.swift" -print0 | xargs -0 grep -l -e "class ClassName1" -e "class ClassName2" -e "class ClassName3"
-        // async function findTestFiles(sourceRoot: string, classNames: string[]): Promise<Record<string, string>> {
-        //   const pattern = classNames.map(className => `class ${className}`).join('|');
-        //   const command = `find "${sourceRoot}" -type f -name "*.swift" -print0 | xargs -0 grep -l -E "${pattern}"`;
-          
-        //   const output = await exec({
-        //     command: 'bash',
-        //     args: ['-c', command],
-        //     shell: true
-        //   });
-          
-        //   const files = output.split('\n').filter(Boolean);
-        //   const result: Record<string, string> = {};
-          
-        //   for (const file of files) {
-        //     const content = await fs.readFile(file, 'utf8');
-        //     for (const className of classNames) {
-        //       if (content.includes(`class ${className}`)) {
-        //         result[className] = file;
-        //         break;
-        //       }
-        //     }
-        //   }
-          
-        //   return result;
-        // }
-        if (file.path.includes(test.className)) {
-          uri = file;
-        }
+      for (const method of test.methodNames) {
+        const methodItem = this.createTestItem({
+          id: `${tests[0].className}.${method}`,
+          label: method,
+          uri: undefined,
+          type: "method",
+        });
+        // TODO: Find range
+        classItem.children.add(methodItem);
       }
 
-      watcher.dispose();
+      this.controller.items.add(classItem);
 
+      // this.updateURIOfTest(classItem)
+    }
+
+    // this.updateURIOfNextTest();
+    this.addURIToAllTests();
+    
+
+    //
+// find "$(pwd)" -name "*.swift" -not -path "*/Pods/*" -not -path "*/DerivedData/*" \
+//   -exec grep -nH -E "XCTestCase|func test|@testable import" {} +
+
+    // const classNames = tests.map(test => `class ${test.className}`).join("|");
+    // const stdout = await exec({
+    //   command: "grep",
+    //   args: ["-rnE", "--include", `*.swift`, "--exclude-dir={Pods,.build,DerivedData}", classNames, sourceRoot],
+    // });
+
+    // const classNames = tests.flatMap(test => ["-e", `class ${test.className}`]);
+    // const stdout = await exec({
+    //   command: "grep",
+    //   args: ["-rl", "--include", `*.swift`, "--exclude-dir={Pods,.build,DerivedData}", ...classNames, this.currentSourceRoot!],
+    // });
+
+    // const lines = stdout.split("\n");
+    // for (const line of lines) {
+    //   if (!line.trim()) continue;
+      
+    //   const candidatePath = line.trim();
+    //   if (!candidatePath) continue;
+
+    //   const uri = vscode.Uri.file(candidatePath);
+    //   const classItem = this.createTestItem({
+    //     id: tests[0].className,
+    //     label: tests[0].className,
+    //     uri: uri,
+    //     type: "class",
+    //   });
+
+    //   for (const method of tests[0].methodNames) {
+    //     const methodItem = this.createTestItem({
+    //       id: `${tests[0].className}.${method}`,
+    //       label: method,
+    //       uri: uri,
+    //       type: "method",
+    //     });
+    //     // TODO: Find range
+    //     classItem.children.add(methodItem);
+    //   }
+
+    //   this.controller.items.add(classItem);
+    //   // break; // We found the first matching file, no need to check others
+    // }
+
+    // grep -rnE --include="*.swift" "XCTestCase|func test|@testable import" "$(pwd)"
+
+    // Process all tests in parallel
+    // await Promise.all(tests.map(test => 
+    //   this.processTest(test, sourceRoot!).catch(error => {
+    //     console.error(`Error processing test ${test.className}:`, error);
+    //   })
+    // ));
+  }
+
+  private async updateURIOfNextTest() {
+    const firstTestWithoutURI = Array.from(this.controller.items).find(test => !test[1].uri);
+    if (firstTestWithoutURI) {
+      await this.updateURIOfTest(firstTestWithoutURI[1]);
+      this.updateURIOfNextTest();
+    }
+  }
+
+  private async processTest(test: XcodeBuildEnumeratedTest, sourceRoot: string): Promise<void> {
+    const stdout = await exec({
+      command: "grep",
+      args: ["-rl", "--include", `*.swift`, "--exclude-dir={Pods,.build,DerivedData}", `class ${test.className}`, sourceRoot],
+    });
+
+    const lines = stdout.split("\n");
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      
+      const candidatePath = line.trim();
+      if (!candidatePath) continue;
+
+      const uri = vscode.Uri.file(candidatePath);
       const classItem = this.createTestItem({
         id: test.className,
         label: test.className,
         uri: uri,
         type: "class",
-      })
+      });
 
       for (const method of test.methodNames) {
         const methodItem = this.createTestItem({
@@ -369,17 +576,18 @@ export class TestingManager {
           label: method,
           uri: uri,
           type: "method",
-        })
+        });
         // TODO: Find range
         classItem.children.add(methodItem);
       }
 
       this.controller.items.add(classItem);
+      break; // We found the first matching file, no need to check others
     }
   }
 
   async doesPackageFileMatchScheme(
-    packagePath: vscode.Uri, 
+    packagePath: vscode.Uri,
     scheme: string
   ): Promise<boolean> {
     try {
@@ -400,15 +608,15 @@ export class TestingManager {
       return false;
     }
   }
-    
-  
+
+
 
   getOrCreateFile(uri: vscode.Uri) {
     const existing = this.controller.items.get(uri.toString());
     if (existing) {
       return existing;
     }
-  
+
     const file = this.createTestItem({
       id: uri.toString(),
       label: uri.path.split('/').pop()!,
@@ -422,27 +630,27 @@ export class TestingManager {
 
   async discoverAllFilesInWorkspace() {
     if (!vscode.workspace.workspaceFolders) {
-      return []; 
+      return [];
     }
-  
+
     return Promise.all(
       vscode.workspace.workspaceFolders.map(async workspaceFolder => {
-        
+
         //
         // TODO: This doesn't work well – it will list all swift files in the test explorer but most of them will be empty
         //
 
         const pattern = new vscode.RelativePattern(workspaceFolder, '**/*.swift');
         const watcher = vscode.workspace.createFileSystemWatcher(pattern);
-  
+
         // When files are created, make sure there's a corresponding "file" node in the tree
         watcher.onDidCreate(uri => this.getOrCreateFile(uri));
         watcher.onDidDelete(uri => this.controller.items.delete(uri.toString()));
-  
+
         for (const file of await vscode.workspace.findFiles(pattern)) {
           this.getOrCreateFile(file);
         }
-  
+
         return watcher;
       })
     );
@@ -506,7 +714,7 @@ export class TestingManager {
   createTestItem(options: {
     id: string;
     label: string;
-    uri: vscode.Uri;
+    uri: vscode.Uri | undefined;
     type: TestItemContext["type"];
   }): vscode.TestItem {
     const testItem = this.controller.createTestItem(options.id, options.label, options.uri);
@@ -537,7 +745,7 @@ export class TestingManager {
     //   }
     // }
 
-    for(const child of testItem.children) {
+    for (const child of testItem.children) {
       this.controller.items.delete(child[0]);
     }
 
@@ -659,7 +867,7 @@ export class TestingManager {
   positionFromOffset(text: string, offset: number): vscode.Position {
     const lines = text.split(/\r?\n/);
     let currentOffset = 0;
-    
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const lineLength = line.length + (line.includes('\r') ? 2 : 1); // Account for \r\n or \n
@@ -668,11 +876,11 @@ export class TestingManager {
       }
       currentOffset += lineLength;
     }
-    
+
     // Fallback if offset is beyond text length
     return new vscode.Position(lines.length - 1, lines[lines.length - 1].length);
   }
-  
+
 
   /**
    * Find all test methods in the given document and update the test items in test controller
@@ -983,7 +1191,7 @@ export class TestingManager {
         if (test.parent?.id === otherTest.id) {
           return true;
         }
-        
+
         let currentParent = test.parent;
         while (currentParent) {
           if (currentParent.id === otherTest.id) {
@@ -991,7 +1199,7 @@ export class TestingManager {
           }
           currentParent = currentParent.parent;
         }
-        
+
         return false;
       });
     });

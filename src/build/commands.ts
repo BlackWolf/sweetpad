@@ -921,7 +921,6 @@ export async function testCommand(context: ExtensionContext, item?: BuildTreeIte
   const scheme =
     item?.scheme ??
     await askSchemeForTesting(context, { xcworkspace: xcworkspace, title: "Select a scheme to run tests" });
-  const configuration = await askConfiguration(context, { xcworkspace: xcworkspace });
 
   context.updateProgressStatus("Searching for configuration");
   const configuration = await askConfiguration(context, { xcworkspace: xcworkspace });
